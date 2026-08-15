@@ -214,6 +214,24 @@ body{
 .func-legend .dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;}
 .func-list{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;margin-top:14px;font-size:12.5px;color:var(--text-2);}
 
+/* ---------- Entity / partner list with badges (Partners & Entities page) ---------- */
+.entity-list{display:flex;flex-direction:column;gap:7px;max-height:420px;overflow-y:auto;padding-right:4px;}
+.entity-row{display:flex;align-items:center;gap:9px;}
+.entity-badge{
+  flex:0 0 auto;min-width:30px;height:22px;padding:0 6px;border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:9px;font-weight:800;color:#fff;letter-spacing:.01em;white-space:nowrap;
+  font-family:'Roboto',sans-serif;
+}
+.entity-badge.neutral{background:#AEB8C4;}
+.entity-name{
+  flex:0 0 auto;width:140px;font-size:12px;color:var(--text-1);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+}
+.entity-track{flex:1 1 auto;height:15px;background:#EEF2F6;border-radius:4px;overflow:hidden;min-width:40px;}
+.entity-track i{display:block;height:100%;border-radius:4px;}
+.entity-value{flex:0 0 auto;font-size:12px;font-weight:700;color:var(--text-1);min-width:74px;text-align:right;font-family:'Roboto',sans-serif;}
+
 .segctrl{display:flex;gap:4px;background:#F0F3F7;border-radius:8px;padding:3px;margin-bottom:12px;width:fit-content;}
 .segctrl button{
   border:none;background:none;padding:6px 12px;border-radius:6px;font-size:11.5px;font-weight:700;
@@ -342,6 +360,16 @@ footer.dashboard-footer{padding:10px 4px 0;display:flex;justify-content:space-be
           <select id="f-year"><option value="">All years (2023–2026)</option></select>
         </div>
         <div class="filter-group">
+          <label>Quarter</label>
+          <select id="f-quarter">
+            <option value="">All quarters</option>
+            <option value="Q1">Q1 (Jan–Mar)</option>
+            <option value="Q2">Q2 (Apr–Jun)</option>
+            <option value="Q3">Q3 (Jul–Sep)</option>
+            <option value="Q4">Q4 (Oct–Dec)</option>
+          </select>
+        </div>
+        <div class="filter-group">
           <label>Strategic Priority</label>
           <select id="f-strat"><option value="">All priorities</option></select>
         </div>
@@ -461,7 +489,7 @@ footer.dashboard-footer{padding:10px 4px 0;display:flex;justify-content:space-be
         <div class="card">
           <h3>Contributing Entities by Programmatic Intervention</h3>
           <div class="card-sub">Full list &middot; number of sub-outputs / activities per UN entity</div>
-          <div class="chart-box h300"><canvas id="chart-agencies"></canvas></div>
+          <div class="entity-list" id="agencies-list"></div>
         </div>
         <div class="card">
           <h3>Interventions &amp; Funding by Partner</h3>
@@ -471,7 +499,7 @@ footer.dashboard-footer{padding:10px 4px 0;display:flex;justify-content:space-be
             <button data-mode="agency">Agency</button>
             <button data-mode="contributing">Contributing Partner</button>
           </div>
-          <div class="chart-box h260"><canvas id="chart-partner"></canvas></div>
+          <div class="entity-list" id="partner-list"></div>
         </div>
         <div class="card">
           <h3>Interventions Targeting LNOB Groups</h3>
@@ -941,7 +969,7 @@ function markerScale(str){
 
 /* ============ State ============ */
 const state = {
-  year:'', outcome:'', strat:'', agency:'', status:'', sdg:'', search:'',
+  year:'', quarter:'', outcome:'', strat:'', agency:'', status:'', sdg:'', search:'',
   subTableSearch:'', indTableSearch:'',
   subSort:{key:'outcomeCode', dir:1}, indSort:{key:'outputCode', dir:1},
   subPage:0, indPage:0, pageSize:12,
@@ -955,6 +983,30 @@ const YEARS = ['2023','2024','2025','2026'];
 function getReq(r){ return state.year ? (r['y'+state.year+'req']||0) : r.required; }
 function getAvail(r){ return state.year ? (r['y'+state.year+'avail']||0) : r.available; }
 function getExp(r){ return state.year ? (r['y'+state.year+'exp']||0) : r.expenditure; }
+
+/* Quarter filter: since the source data only carries annual financial columns,
+   "quarter" is applied as a date-window check against each sub-output's own
+   start/end dates (interventions active during that quarter), not a split of
+   annual figures. */
+const QUARTER_MONTHS = { Q1:[0,2], Q2:[3,5], Q3:[6,8], Q4:[9,11] };
+function rowActiveInQuarter(r, quarter, year){
+  if (!quarter) return true;
+  if (!r.startDate || !r.endDate) return false;
+  const range = QUARTER_MONTHS[quarter];
+  if (!range) return true;
+  const rowStart = new Date(r.startDate);
+  const rowEnd = new Date(r.endDate);
+  if (isNaN(rowStart) || isNaN(rowEnd)) return false;
+  const years = year ? [parseInt(year,10)] : [];
+  if (!years.length){
+    for (let y=rowStart.getFullYear(); y<=rowEnd.getFullYear(); y++) years.push(y);
+  }
+  return years.some(y => {
+    const qStart = new Date(y, range[0], 1);
+    const qEnd = new Date(y, range[1]+1, 0);
+    return rowStart <= qEnd && rowEnd >= qStart;
+  });
+}
 
 const outcomeMeta = {};
 SUB_DATA.forEach(r => {
@@ -987,6 +1039,7 @@ function matchStates(geo){
 function populateFilters(){
   const ySel = document.getElementById('f-year');
   YEARS.forEach(y => { const opt=document.createElement('option'); opt.value=y; opt.textContent=y; ySel.appendChild(opt); });
+  const qSel = document.getElementById('f-quarter');
 
   const ocSel = document.getElementById('f-outcome');
   outcomeCodes.forEach(code => {
@@ -1019,7 +1072,8 @@ function populateFilters(){
   const sdgSel = document.getElementById('f-sdg');
   [...sdgSet].map(Number).sort((a,b)=>a-b).forEach(n => { const opt=document.createElement('option'); opt.value=n; opt.textContent='SDG '+n; sdgSel.appendChild(opt); });
 
-  ySel.addEventListener('change', e => { state.year = e.target.value; refresh(); });
+  ySel.addEventListener('change', e => { state.year = e.target.value; state.subPage=0; state.indPage=0; refresh(); });
+  qSel.addEventListener('change', e => { state.quarter = e.target.value; state.subPage=0; state.indPage=0; refresh(); });
   ocSel.addEventListener('change', e => { state.outcome = e.target.value; state.subPage=0; state.indPage=0; refresh(); });
   stSel2.addEventListener('change', e => { state.strat = e.target.value; state.subPage=0; state.indPage=0; refresh(); });
   agSel.addEventListener('change', e => { state.agency = e.target.value; state.subPage=0; state.indPage=0; refresh(); });
@@ -1027,8 +1081,8 @@ function populateFilters(){
   sdgSel.addEventListener('change', e => { state.sdg = e.target.value; state.subPage=0; refresh(); });
   document.getElementById('f-search').addEventListener('input', e => { state.search = e.target.value.toLowerCase(); state.subPage=0; state.indPage=0; refresh(); });
   document.getElementById('reset-filters').addEventListener('click', () => {
-    state.year=''; state.outcome=''; state.strat=''; state.agency=''; state.status=''; state.sdg=''; state.search='';
-    ySel.value=''; ocSel.value=''; stSel2.value=''; agSel.value=''; stSel.value=''; sdgSel.value=''; document.getElementById('f-search').value='';
+    state.year=''; state.quarter=''; state.outcome=''; state.strat=''; state.agency=''; state.status=''; state.sdg=''; state.search='';
+    ySel.value=''; qSel.value=''; ocSel.value=''; stSel2.value=''; agSel.value=''; stSel.value=''; sdgSel.value=''; document.getElementById('f-search').value='';
     state.subPage=0; state.indPage=0; refresh();
   });
 }
@@ -1040,6 +1094,7 @@ function subMatches(r){
   if (state.agency && !splitList(r.agencyAbbr).includes(state.agency)) return false;
   if (state.status && r.status !== state.status) return false;
   if (state.sdg && !sdgNumbers(r.sdgGoals).includes(state.sdg)) return false;
+  if (state.quarter && !rowActiveInQuarter(r, state.quarter, state.year)) return false;
   if (state.search){
     const hay = [r.subOutput, r.output, r.outcome, r.id, r.agencies].join(' ').toLowerCase();
     if (!hay.includes(state.search)) return false;
@@ -1298,22 +1353,63 @@ function renderMarkersChart(){
     Object.entries(hum).map(([k,v]) => `${esc(k)} (${v})`).join(' &middot; ');
 }
 
+/* ============ Agency badges (Partners & Entities page) ============ */
+const AGENCY_META = {
+  'FAO':     { name:'Food and Agriculture Organization', color:'#4C9F38' },
+  'IFAD':    { name:'International Fund for Agricultural Development', color:'#F5A623' },
+  'ILO':     { name:'International Labour Organization', color:'#8E44AD' },
+  'IOM':     { name:'International Organization for Migration', color:'#0072BC' },
+  'ITC':     { name:'International Trade Centre', color:'#B03A2E' },
+  'OHCHR':   { name:'UN Human Rights Office', color:'#5DADE2' },
+  'UN DESA': { name:'UN Department of Economic and Social Affairs', color:'#2E86C1' },
+  'UN Women':{ name:'UN Entity for Gender Equality and the Empowerment of Women', color:'#EE3A78' },
+  'UN-HABITAT': { name:'UN Human Settlements Programme', color:'#F39C12' },
+  'UNAIDS':  { name:'Joint United Nations Programme on HIV/AIDS', color:'#D7263D' },
+  'UNCDF':   { name:'UN Capital Development Fund', color:'#7F8C8D' },
+  'UNCTAD':  { name:'UN Conference on Trade and Development', color:'#3498DB' },
+  'UNDP':    { name:'United Nations Development Programme', color:'#1F6FEB' },
+  'UNEP':    { name:'United Nations Environment Programme', color:'#27AE60' },
+  'UNESCO':  { name:'UN Educational, Scientific and Cultural Organization', color:'#1A5276' },
+  'UNFPA':   { name:'United Nations Population Fund', color:'#E67E22' },
+  'UNHCR':   { name:'UN Refugee Agency', color:'#2980B9' },
+  'UNICEF':  { name:"United Nations Children's Fund", color:'#1CABE2' },
+  'UNIDO':   { name:'United Nations Industrial Development Organization', color:'#5D6D7E' },
+  'UNMISS':  { name:'United Nations Mission in South Sudan', color:'#34495E' },
+  'UNODC':   { name:'UN Office on Drugs and Crime', color:'#6C3483' },
+  'UNOPS':   { name:'United Nations Office for Project Services', color:'#2471A3' },
+  'WFP':     { name:'World Food Programme', color:'#C0392B' },
+  'WHO':     { name:'World Health Organization', color:'#2E86C1' },
+};
+function agencyMonogram(abbr){
+  const clean = String(abbr).replace(/^UN[\s-]?/i,'UN').toUpperCase();
+  return clean.length <= 6 ? clean : clean.slice(0,6);
+}
+function agencyBadgeHTML(abbr){
+  const meta = AGENCY_META[abbr];
+  const color = meta ? meta.color : '#AEB8C4';
+  return `<span class="entity-badge" style="background:${color}" title="${esc(meta?meta.name:abbr)}">${esc(agencyMonogram(abbr))}</span>`;
+}
+function genericEntityBadgeHTML(){
+  return `<span class="entity-badge neutral" title="Non-UN implementing/contributing partner">&#127970;</span>`;
+}
+
 function renderAgenciesChart(){
   const rows = getFilteredSub();
   const counts = {};
   rows.forEach(r => splitList(r.agencyAbbr).forEach(a => counts[a]=(counts[a]||0)+1));
   const all = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
-  destroyChart('agencies');
-  const h = Math.max(260, all.length*22);
-  document.getElementById('chart-agencies').parentElement.style.height = h+'px';
-  charts.agencies = new Chart(document.getElementById('chart-agencies'), {
-    type:'bar',
-    data:{ labels: all.map(t=>t[0]), datasets:[{ data: all.map(t=>t[1]), backgroundColor: COLORS.blueDark, borderRadius:4, maxBarThickness:16 }] },
-    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: ctx => ctx.parsed.x+' sub-outputs' } },
-        datalabels:{ display:true, anchor:'end', align:'right', color:'#12233F', font:{size:12,family:"'Roboto', sans-serif"}, formatter:v=>v } },
-      scales:{ x:{ grid:{color:'#EEF2F6'}, ticks:{font:{size:12}} }, y:{ grid:{display:false}, ticks:{font:{size:12}} } } }
-  });
+  const maxV = Math.max(1, ...all.map(t=>t[1]));
+  document.getElementById('agencies-list').innerHTML = all.map(([abbr,count]) => {
+    const meta = AGENCY_META[abbr];
+    const color = meta ? meta.color : COLORS.blueDark;
+    return `
+    <div class="entity-row">
+      ${agencyBadgeHTML(abbr)}
+      <span class="entity-name" title="${esc(meta?meta.name:abbr)}">${esc(abbr)}</span>
+      <span class="entity-track"><i style="width:${(count/maxV*100).toFixed(1)}%;background:${color}"></i></span>
+      <span class="entity-value">${count} sub-outputs</span>
+    </div>`;
+  }).join('') || `<div style="color:#8E9BAC;font-size:12.5px;padding:12px 0;">No entities match the current filters</div>`;
 }
 
 function partnerFieldFor(mode){
@@ -1323,27 +1419,31 @@ function partnerFieldFor(mode){
 }
 function renderPartnerChart(){
   const rows = getFilteredSub();
-  const field = partnerFieldFor(state.partnerMode);
+  const mode = state.partnerMode;
+  const field = partnerFieldFor(mode);
   const agg = {};
   rows.forEach(r => splitList(r[field]).forEach(p => {
     if (!agg[p]) agg[p] = {count:0, funding:0};
     agg[p].count++; agg[p].funding += getReq(r);
   }));
   const top = Object.entries(agg).sort((a,b)=>b[1].count-a[1].count).slice(0,12);
-  destroyChart('partner');
-  charts.partner = new Chart(document.getElementById('chart-partner'), {
-    type:'bar',
-    data:{ labels: top.map(t=>truncate(t[0],32)), datasets:[
-      { label:'Interventions', data: top.map(t=>t[1].count), backgroundColor: COLORS.violet, borderRadius:4, maxBarThickness:14, yAxisID:'y' },
-    ]},
-    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{
-        title: ctx => top[ctx[0].dataIndex][0],
-        label: ctx => [ ctx.parsed.x+' interventions', 'Required: '+fmtUSD(top[ctx.dataIndex][1].funding) ] } },
-        datalabels:{ display:true, anchor:'end', align:'right', color:'#12233F', font:{size:12,family:"'Roboto', sans-serif"},
-          formatter:(v,ctx)=> v+' ('+fmtUSD(top[ctx.dataIndex][1].funding)+')' } },
-      scales:{ x:{ grid:{color:'#EEF2F6'}, ticks:{font:{size:12}} }, y:{ grid:{display:false}, ticks:{font:{size:12}} } } }
-  });
+  const maxV = Math.max(1, ...top.map(t=>t[1].count));
+  document.getElementById('partner-list').innerHTML = top.map(([name,d]) => {
+    let abbr = name;
+    if (mode==='agency'){
+      const found = Object.keys(AGENCY_META).find(a => a.toLowerCase()===name.toLowerCase());
+      abbr = found || name;
+    }
+    const badge = mode==='agency' ? agencyBadgeHTML(abbr) : genericEntityBadgeHTML();
+    const color = (mode==='agency' && AGENCY_META[abbr]) ? AGENCY_META[abbr].color : COLORS.violet;
+    return `
+    <div class="entity-row">
+      ${badge}
+      <span class="entity-name" title="${esc(name)}">${esc(truncate(name,26))}</span>
+      <span class="entity-track"><i style="width:${(d.count/maxV*100).toFixed(1)}%;background:${color}"></i></span>
+      <span class="entity-value">${d.count} (${fmtUSD(d.funding)})</span>
+    </div>`;
+  }).join('') || `<div style="color:#8E9BAC;font-size:12.5px;padding:12px 0;">No partners match the current filters</div>`;
 }
 function setupPartnerToggle(){
   document.querySelectorAll('#partner-toggle button').forEach(btn => {
