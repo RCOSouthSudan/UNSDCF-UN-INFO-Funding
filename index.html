@@ -214,18 +214,11 @@ body{
 .func-legend .dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;}
 .func-list{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;margin-top:14px;font-size:12.5px;color:var(--text-2);}
 
-/* ---------- Entity / partner list with badges (Partners & Entities page) ---------- */
+/* ---------- Entity / partner list (Partners & Entities page) ---------- */
 .entity-list{display:flex;flex-direction:column;gap:7px;max-height:420px;overflow-y:auto;padding-right:4px;}
 .entity-row{display:flex;align-items:center;gap:9px;}
-.entity-badge{
-  flex:0 0 auto;min-width:30px;height:22px;padding:0 6px;border-radius:6px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:9px;font-weight:800;color:#fff;letter-spacing:.01em;white-space:nowrap;
-  font-family:'Roboto',sans-serif;
-}
-.entity-badge.neutral{background:#AEB8C4;}
 .entity-name{
-  flex:0 0 auto;width:140px;font-size:12px;color:var(--text-1);white-space:nowrap;
+  flex:0 0 auto;width:160px;font-size:12px;color:var(--text-1);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;
 }
 .entity-track{flex:1 1 auto;height:15px;background:#EEF2F6;border-radius:4px;overflow:hidden;min-width:40px;}
@@ -1384,14 +1377,6 @@ function agencyMonogram(abbr){
   const clean = String(abbr).replace(/^UN[\s-]?/i,'UN').toUpperCase();
   return clean.length <= 6 ? clean : clean.slice(0,6);
 }
-function agencyBadgeHTML(abbr){
-  const meta = AGENCY_META[abbr];
-  const color = meta ? meta.color : '#AEB8C4';
-  return `<span class="entity-badge" style="background:${color}" title="${esc(meta?meta.name:abbr)}">${esc(agencyMonogram(abbr))}</span>`;
-}
-function genericEntityBadgeHTML(){
-  return `<span class="entity-badge neutral" title="Non-UN implementing/contributing partner">&#127970;</span>`;
-}
 
 function renderAgenciesChart(){
   const rows = getFilteredSub();
@@ -1404,7 +1389,6 @@ function renderAgenciesChart(){
     const color = meta ? meta.color : COLORS.blueDark;
     return `
     <div class="entity-row">
-      ${agencyBadgeHTML(abbr)}
       <span class="entity-name" title="${esc(meta?meta.name:abbr)}">${esc(abbr)}</span>
       <span class="entity-track"><i style="width:${(count/maxV*100).toFixed(1)}%;background:${color}"></i></span>
       <span class="entity-value">${count} sub-outputs</span>
@@ -1434,11 +1418,9 @@ function renderPartnerChart(){
       const found = Object.keys(AGENCY_META).find(a => a.toLowerCase()===name.toLowerCase());
       abbr = found || name;
     }
-    const badge = mode==='agency' ? agencyBadgeHTML(abbr) : genericEntityBadgeHTML();
     const color = (mode==='agency' && AGENCY_META[abbr]) ? AGENCY_META[abbr].color : COLORS.violet;
     return `
     <div class="entity-row">
-      ${badge}
       <span class="entity-name" title="${esc(name)}">${esc(truncate(name,26))}</span>
       <span class="entity-track"><i style="width:${(d.count/maxV*100).toFixed(1)}%;background:${color}"></i></span>
       <span class="entity-value">${d.count} (${fmtUSD(d.funding)})</span>
@@ -1522,9 +1504,10 @@ function renderOutputCountChart(){
   });
 }
 
-/* ============ Geography map (Leaflet + OpenStreetMap) ============ */
+/* ============ Geography map (Leaflet choropleth + OpenStreetMap) ============ */
 let geoMap = null;
 let geoMarkers = {};
+
 function renderGeoMap(){
   const rows = getFilteredSub();
   const stateCounts = {}; SSD_STATES.forEach(s => stateCounts[s]=0);
@@ -1535,7 +1518,7 @@ function renderGeoMap(){
     else { nationalCount++; }
   });
   const maxCount = Math.max(1, ...Object.values(stateCounts));
-  const rScale = v => 7 + Math.sqrt(v / maxCount) * 24;
+  const rScale = v => 8 + Math.sqrt(v / maxCount) * 26;
 
   if (!window.L){
     document.getElementById('geo-map-canvas').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8E9BAC;font-size:12.5px;text-align:center;padding:12px;">Map tiles require an internet connection (OpenStreetMap).</div>';
@@ -1545,38 +1528,47 @@ function renderGeoMap(){
       maxZoom: 12,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(geoMap);
+
     SSD_STATES.forEach(s => {
       const ll = SSD_STATE_LATLON[s];
       const v = stateCounts[s];
-      const marker = L.circleMarker([ll.lat, ll.lon], {
-        radius: rScale(v), color:'#fff', weight:1.4, fillColor: COLORS.blueDark, fillOpacity:0.68
+      const r = rScale(v);
+      // soft outer halo, giving the marker a glowing "bulb" look
+      const halo = L.circleMarker([ll.lat, ll.lon], {
+        radius: r + 6, stroke:false, fillColor: COLORS.blueDark, fillOpacity:0.16, interactive:false
       }).addTo(geoMap);
-      marker.bindTooltip(s + ': ' + v + ' sub-output' + (v===1?'':'s') + ' / activities', { direction:'top', className:'leaflet-tooltip' });
-      geoMarkers[s] = marker;
+      const bulb = L.circleMarker([ll.lat, ll.lon], {
+        radius: r, color:'#fff', weight:1.6, fillColor: COLORS.blueDark, fillOpacity:0.78
+      }).addTo(geoMap);
+      bulb.bindTooltip(s + ': ' + v + ' sub-output' + (v===1?'':'s') + ' / activities', { direction:'top', className:'leaflet-tooltip' });
+      geoMarkers[s] = { halo, bulb };
     });
     setTimeout(() => geoMap.invalidateSize(), 50);
   } else {
     geoMap.invalidateSize();
     SSD_STATES.forEach(s => {
       const v = stateCounts[s];
-      const marker = geoMarkers[s];
-      if (marker){
-        marker.setRadius(rScale(v));
-        marker.setTooltipContent(s + ': ' + v + ' sub-output' + (v===1?'':'s') + ' / activities');
+      const r = rScale(v);
+      const m = geoMarkers[s];
+      if (m){
+        m.halo.setRadius(r+6);
+        m.bulb.setRadius(r);
+        m.bulb.setTooltipContent(s + ': ' + v + ' sub-output' + (v===1?'':'s') + ' / activities');
       }
     });
   }
 
-  // legend / ranked location list below the map
+  // ranked location list below the map — the number of programmatic interventions by state
   const legend = document.getElementById('geo-legend');
   const ranked = SSD_STATES.map(s => [s, stateCounts[s]]).sort((a,b)=>b[1]-a[1]);
   legend.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:12px;color:#5B6B7F;margin-top:12px;">
       ${ranked.map(([s,v]) => `<div style="display:flex;justify-content:space-between;"><span>${esc(s)}</span><b style="color:#132A46;font-family:'Roboto',sans-serif;">${v}</b></div>`).join('')}
     </div>
-    <div class="small-note">National-level / multi-location or unspecified sub-outputs: <b>${nationalCount}</b>. Sub-outputs spanning more than one state are counted once per state, so totals can exceed the number of sub-outputs. Bubble size is proportional to the number of sub-outputs in each state.</div>
+    <div class="small-note">National-level / multi-location or unspecified sub-outputs: <b>${nationalCount}</b>. Sub-outputs spanning more than one state are counted once per state, so totals can exceed the number of sub-outputs. Bubble size is proportional to the number of programmatic interventions in each state.</div>
   `;
 }
+
 
 /* ============ Generic thematic marker page (Gender, Human Rights, ...) ============ */
 const MARKER_KEYS = [0,1,2,3,'none'];
